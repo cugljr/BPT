@@ -1,0 +1,2 @@
+model_id,count_pts,count_verts,count_faces,inference_time
+00000,4096,16,28,0.81
