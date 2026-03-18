@@ -1,0 +1,40 @@
+model_config:
+  _target_: src.model_config.BPTModelConfig
+  exp_flag: bpt
+
+  # dataset
+  dataset_dir: /home/kemove/devdata1/zyx/BuildingGPT/dataset/Objaverse_500_Silksong-128
+  augment: True
+  num_discrete: 128
+  n_points: 4096
+  block_size: 8
+  offset_size: 16
+  max_seq_len: 2000 # > 0.25 * 500 * 9
+
+  # training
+  batch_size: 16
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1
+
+  # model
+  decoder_config:
+    {
+      dim: 512,
+      depth: 12,
+      heads: 4,
+      dropout: 0.0,
+      cross_attn_num_mem_kv: 4,
+      attn_flash: True,
+      ff_glu: True,
+      attn_qk_norm: True,
+    }
+  
+  miche_path: /home/kemove/devdata1/zyx/BPT-Lighting/miche
+  miche_freeze: True
+  finetune: False
+  base_ckpt: ""
+
+  # training config
+  learning_rate: 3e-4
+  eta_min: 1e-4
+  epochs: 500
