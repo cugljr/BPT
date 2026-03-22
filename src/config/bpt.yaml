@@ -3,7 +3,7 @@ model_config:
   exp_flag: bpt
 
   # dataset
-  dataset_dir: /home/kemove/devdata1/zyx/BuildingGPT/dataset/Objaverse_500_Silksong-128
+  dataset_dir: /home/kemove/devdata1/ljr/dataset/Tallinn
   augment: True
   num_discrete: 128
   n_points: 4096
@@ -29,7 +29,7 @@ model_config:
       attn_qk_norm: True,
     }
   
-  miche_path: /home/kemove/devdata1/zyx/BPT-Lighting/miche
+  miche_path: /home/kemove/devdata1/ljr/BPT/miche
   miche_freeze: True
   finetune: False
   base_ckpt: ""
