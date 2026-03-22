@@ -51,6 +51,8 @@ def main() -> None:
 
     trainer = Trainer(
         max_epochs=epochs,
+        accelerator="gpu",
+        devices=[1],
         precision="16-mixed",
         log_every_n_steps=1,
         gradient_clip_val=gradient_clip_val,
