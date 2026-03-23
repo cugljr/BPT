@@ -44,7 +44,8 @@ class BPTModelConfig:
             num_discrete=num_discrete,
             block_size=block_size,
             offset_size=offset_size,
-            n_points=n_points
+            n_points=n_points,
+            max_seq_len=max_seq_len,
         )
 
         self.dataset_length = len(self.data_module.train_dataset)

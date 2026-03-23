@@ -1,6 +1,6 @@
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-os.environ["WANDB_BASE_URL"] = "https://api.bandw.top"
+#os.environ["WANDB_BASE_URL"] = "https://api.bandw.top"
 import torch
 import hydra
 from pathlib import Path

@@ -17,18 +17,8 @@ model_config:
   gradient_clip_val: 1
 
   # model
-  decoder_config:
-    {
-      dim: 512,
-      depth: 12,
-      heads: 4,
-      dropout: 0.0,
-      cross_attn_num_mem_kv: 4,
-      attn_flash: True,
-      ff_glu: True,
-      attn_qk_norm: True,
-    }
-  
+  decoder_config: { dim: 512, depth: 12, heads: 4, dropout: 0.0, cross_attn_num_mem_kv: 4, attn_flash: True, ff_glu: True, attn_qk_norm: True }
+
   miche_path: /home/kemove/devdata1/ljr/BPT/miche
   miche_freeze: True
   finetune: False

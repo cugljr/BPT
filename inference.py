@@ -91,6 +91,16 @@ def load_model(exp_name, device, ckpt_type):
     return model
 
 
+def estimate_point_normals(points: np.ndarray) -> np.ndarray:
+    pc_o3d = o3d.geometry.PointCloud()
+    pc_o3d.points = o3d.utility.Vector3dVector(points.astype(np.float64))
+    pc_o3d.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
+    )
+    normals = np.asarray(pc_o3d.normals, dtype=np.float32)
+    return np.concatenate([points.astype(np.float32), normals], axis=1)
+
+
 def load_partial_pc(partial_path, n_points, device, use_vertices, gt_vertices=None):
     pc_partial = read_pts_common(partial_path)
     if use_vertices:
@@ -103,6 +113,7 @@ def load_partial_pc(partial_path, n_points, device, use_vertices, gt_vertices=No
         pc_partial = pc_norm(pc_partial)
         pc_partial = add_base_points(pc_partial, n_points, None, use_vertices=False)
     pc_partial = sample_pts_to_fixed_num(pc_partial, n_points)
+    pc_partial = estimate_point_normals(pc_partial)
     pc_partial_tensor = (
         torch.tensor(pc_partial).unsqueeze(0).to(dtype=torch.float32, device=device)
     )
