@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import argparse
+import sys
+from pathlib import Path
 from omegaconf import OmegaConf
 import numpy as np
 import torch
@@ -53,6 +55,15 @@ def reconstruction(
 def load_model(
     ckpt_path="miche/shapevae-256.ckpt", config_path="miche/shapevae-256.yaml"
 ):
+    config_path = str(config_path)
+    ckpt_path = str(ckpt_path)
+
+    for candidate in Path(config_path).resolve().parents:
+        if (candidate / "michelangelo").is_dir():
+            candidate_str = str(candidate)
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            break
 
     model_config = OmegaConf.load(config_path)
     # print(model_config)

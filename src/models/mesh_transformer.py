@@ -26,6 +26,8 @@ class MeshTransformer(LightningModule):
         offset_size: int = 16,
         pad_id: int = -1,
         miche_path: str = "",
+        miche_ckpt_path: str = "",
+        miche_config_path: str = "",
         miche_freeze: bool = True,
         max_seq_len: int = 1500,
         learning_rate: float = 3e-4,
@@ -70,7 +72,11 @@ class MeshTransformer(LightningModule):
         self.abs_pos_emb = nn.Embedding(max_seq_len, dim)
 
         self.conditioner = PointConditioner(
-            miche_path=miche_path, feature_dim=dim, freeze=miche_freeze
+            miche_path=miche_path,
+            miche_ckpt_path=miche_ckpt_path if miche_ckpt_path else None,
+            miche_config_path=miche_config_path if miche_config_path else None,
+            feature_dim=dim,
+            freeze=miche_freeze,
         )
 
         # autoregressive attention network
