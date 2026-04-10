@@ -355,18 +355,9 @@ def pc_mesh_normals(points: np.ndarray, mesh: trimesh.Trimesh) -> np.ndarray:
     return pc_with_normals
 
 
-def sample_pc(mesh, n_points, with_normal=False):
-    if not with_normal:
-        points, _ = mesh.sample(n_points, return_index=True)
-        return points
-
-    points, face_idx = mesh.sample(n_points * 10, return_index=True)
-    normals = mesh.face_normals[face_idx]
-    pc_normal = np.concatenate([points, normals], axis=-1, dtype=np.float32)
-    # random sample point cloud
-    ind = np.random.choice(pc_normal.shape[0], n_points, replace=False)
-    pc_normal = pc_normal[ind]
-    return pc_normal
+def sample_pc(mesh, n_points):
+    points, _ = mesh.sample(n_points, return_index=True)
+    return np.asarray(points, dtype=np.float32)
 
 
 if __name__ == "__main__":
@@ -382,5 +373,5 @@ if __name__ == "__main__":
                 mesh_file, num_discrete=128, augment=True, transpose=True
             )
     mesh = to_mesh(vertices, faces, transpose=True)
-    pc = sample_pc(mesh, 4096, True)
+    pc = sample_pc(mesh, 4096)
     mesh.export("reconstructed.obj")

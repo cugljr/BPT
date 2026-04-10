@@ -11,17 +11,18 @@ from .michelangelo.utils.misc import instantiate_from_config
 def load_surface(fp):
 
     with np.load(fp) as input_pc:
-        surface = input_pc["points"]
-        normal = input_pc["normals"]
+        if "points" in input_pc:
+            surface = input_pc["points"]
+        elif "surface" in input_pc:
+            surface = input_pc["surface"][..., :3]
+        else:
+            raise KeyError("expected `points` or `surface` in the input npz")
 
     rng = np.random.default_rng()
     ind = rng.choice(surface.shape[0], 4096, replace=False)
     surface = torch.FloatTensor(surface[ind])
-    normal = torch.FloatTensor(normal[ind])
 
-    surface = torch.cat([surface, normal], dim=-1).unsqueeze(0).cuda()
-
-    return surface
+    return surface.unsqueeze(0).cuda()
 
 
 def reconstruction(

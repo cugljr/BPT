@@ -127,7 +127,7 @@ class AlignedShapeAsLatentPLModule(nn.Module):
     def encode(self, surface: torch.FloatTensor, sample_posterior=True):
 
         pc = surface[..., 0:3]
-        feats = surface[..., 3:6]
+        feats = surface[..., 3:]
 
         shape_embed, shape_zq, posterior = self.model.shape_model.encode(
             pc=pc, feats=feats, sample_posterior=sample_posterior
@@ -138,7 +138,7 @@ class AlignedShapeAsLatentPLModule(nn.Module):
     def encode_latents(self, surface: torch.FloatTensor):
 
         pc = surface[..., 0:3]
-        feats = surface[..., 3:6]
+        feats = surface[..., 3:]
 
         shape_embed, shape_latents = self.model.shape_model.encode_latents(
             pc=pc, feats=feats

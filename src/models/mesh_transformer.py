@@ -98,7 +98,7 @@ class MeshTransformer(LightningModule):
     def forward(
         self,
         codes: Tensor,
-        pc_norm: Tensor = None,
+        pc_xyz: Tensor = None,
         cond_embeds: Tensor = None,
         return_loss: bool = True,
         return_cache: bool = False,
@@ -107,7 +107,7 @@ class MeshTransformer(LightningModule):
     ):
         # handle conditions
         if cond_embeds is None:
-            cond_embeds = self.conditioner(pc_norm)
+            cond_embeds = self.conditioner(pc_xyz)
 
         # prepare mask for position embedding of block and offset tokens
         block_mask = (0 <= codes) & (codes < self.block_val)
@@ -185,9 +185,9 @@ class MeshTransformer(LightningModule):
 
     def training_step(self, batch):
         codes = batch["codes"]
-        pc_norm = batch["pc_norm"]
+        pc_xyz = batch["pc_xyz"]
 
-        loss_ce, acc = self(codes, pc_norm)
+        loss_ce, acc = self(codes, pc_xyz)
 
         self.log(
             "train/loss_ce",
@@ -213,9 +213,9 @@ class MeshTransformer(LightningModule):
 
     def validation_step(self, batch):
         codes = batch["codes"]
-        pc_norm = batch["pc_norm"]
+        pc_xyz = batch["pc_xyz"]
 
-        loss_ce, acc = self(codes, pc_norm)
+        loss_ce, acc = self(codes, pc_xyz)
 
         self.log(
             "val/loss_ce",
@@ -270,7 +270,7 @@ class MeshTransformer(LightningModule):
 
     def generate(
         self,
-        pc_norm: Tensor,
+        pc_xyz: Tensor,
         prompt: Tensor = None,
         batch_size: int = 1,
         max_seq_len: int = 1500,
@@ -280,7 +280,7 @@ class MeshTransformer(LightningModule):
         cache_kv: bool = True,
     ):
         # encode point cloud
-        cond_embeds = self.conditioner(pc_norm)
+        cond_embeds = self.conditioner(pc_xyz)
         codes = default(
             prompt, torch.empty((batch_size, 0), dtype=torch.int32, device=self.device)
         )

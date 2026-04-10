@@ -30,10 +30,8 @@ class PointConditioner(nn.Module):
             for param in self.point_encoder.parameters():
                 param.requires_grad = False
 
-    def _encode_shapevae(self, pc_norm: torch.Tensor) -> torch.Tensor:
-        pc = pc_norm[..., 0:3]
-        feats = pc_norm[..., 3:6]
-        latents, _ = self.point_encoder.sal.encoder(pc, feats)
+    def _encode_shapevae(self, pc_xyz: torch.Tensor) -> torch.Tensor:
+        latents, _ = self.point_encoder.sal.encoder(pc_xyz, None)
 
         # The original aligned encoder exposes a dedicated head token. For the
         # shape-only Tallinn encoder, synthesize one from the latent average so
@@ -41,16 +39,16 @@ class PointConditioner(nn.Module):
         head = latents.mean(dim=1, keepdim=True)
         return torch.cat([head, latents], dim=1)
 
-    def forward(self, pc_norm: torch.Tensor):
+    def forward(self, pc_xyz: torch.Tensor):
         if self.uses_shapevae_encoder:
-            point_feature = self._encode_shapevae(pc_norm)
+            point_feature = self._encode_shapevae(pc_xyz)
         else:
-            point_feature = self.point_encoder.encode_latents(pc_norm)
+            point_feature = self.point_encoder.encode_latents(pc_xyz)
 
         pc_embed_head = self.cond_head_proj(point_feature[:, 0:1])
         pc_embed = self.cond_proj(point_feature[:, 1:])
         pc_embed = torch.cat([pc_embed_head, pc_embed], dim=1)
 
-        assert not torch.any(torch.isnan(pc_embed)), "NAN values in pc_norm embeddings"
+        assert not torch.any(torch.isnan(pc_embed)), "NAN values in point cloud embeddings"
 
         return pc_embed

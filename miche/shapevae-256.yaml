@@ -6,7 +6,7 @@ model:
       params:
         num_latents: 256
         embed_dim: 64
-        point_feats: 3   # normal
+        point_feats: 0   # xyz only
         num_freqs: 8
         include_pi: false
         heads: 12

@@ -108,13 +108,13 @@ class BPTDataset(Dataset):
                 f"Could not sample mesh with seq_len <= {self.max_seq_len} after {max_retries} retries"
             )
 
-        pc_norm = sample_pc(mesh, self.n_points, with_normal=True)
+        pc_xyz = sample_pc(mesh, self.n_points)
         codes = torch.tensor(codes, dtype=torch.int32)
-        pc_norm = torch.tensor(pc_norm, dtype=torch.float32)
+        pc_xyz = torch.tensor(pc_xyz, dtype=torch.float32)
 
         data_dict = dict(
             codes=codes,
-            pc_norm=pc_norm,
+            pc_xyz=pc_xyz,
             filename=filename,
         )
         return data_dict
@@ -175,7 +175,7 @@ class BPTDataModule(LightningDataModule):
     ) -> Dict[str, torch.Tensor]:
         pad_value_map = {
             "codes": self.pad_id,
-            "pc_norm": 0,
+            "pc_xyz": 0,
         }
         collated = {}
         for key in ds[0].keys():
