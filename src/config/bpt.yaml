@@ -23,6 +23,7 @@ model_config:
   miche_ckpt_path: /home/kemove/devdata1/ljr/Michelangelo/runs/tallinn-shapevae-256-xyz/checkpoints/last.ckpt
   miche_config_path: /home/kemove/devdata1/ljr/Michelangelo/configs/aligned_shape_latents/tallinn-shapevae-256-xyz.yaml
   miche_freeze: True
+  miche_disable_checkpoint: True
   finetune: False
   base_ckpt: ""
 

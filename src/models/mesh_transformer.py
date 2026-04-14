@@ -29,6 +29,7 @@ class MeshTransformer(LightningModule):
         miche_ckpt_path: str = "",
         miche_config_path: str = "",
         miche_freeze: bool = True,
+        miche_disable_checkpoint: bool = True,
         max_seq_len: int = 1500,
         learning_rate: float = 3e-4,
         eta_min: float = 1e-4,
@@ -77,6 +78,7 @@ class MeshTransformer(LightningModule):
             miche_config_path=miche_config_path if miche_config_path else None,
             feature_dim=dim,
             freeze=miche_freeze,
+            disable_checkpoint=miche_disable_checkpoint,
         )
 
         # autoregressive attention network

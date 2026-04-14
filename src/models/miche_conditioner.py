@@ -6,6 +6,12 @@ from typing import Optional
 
 
 class PointConditioner(nn.Module):
+    @staticmethod
+    def _disable_model_checkpointing(module: nn.Module) -> None:
+        for submodule in module.modules():
+            if hasattr(submodule, "use_checkpoint"):
+                submodule.use_checkpoint = False
+
     def __init__(
         self,
         miche_path: str = "",
@@ -14,12 +20,15 @@ class PointConditioner(nn.Module):
         cond_dim: int = 768,
         feature_dim: int = 512,
         freeze: bool = True,
+        disable_checkpoint: bool = True,
     ):
         super().__init__()
 
         ckpt_path = miche_ckpt_path or join(miche_path, "shapevae-256.ckpt")
         config_path = miche_config_path or join(miche_path, "shapevae-256.yaml")
         self.point_encoder = load_model(ckpt_path=ckpt_path, config_path=config_path)
+        if disable_checkpoint:
+            self._disable_model_checkpointing(self.point_encoder)
         self.uses_shapevae_encoder = hasattr(self.point_encoder, "sal")
 
         # Adapt the encoder output to downstream model
