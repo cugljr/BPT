@@ -8,6 +8,7 @@ from x_transformers.autoregressive_wrapper import top_k
 from tqdm import tqdm
 from lightning.pytorch import LightningModule
 from src.models.miche_conditioner import PointConditioner
+from src.models.ptv2_conditioner import PTV2Conditioner
 from src.utils.helper import *
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim import AdamW
@@ -25,11 +26,15 @@ class MeshTransformer(LightningModule):
         block_size: int = 8,
         offset_size: int = 16,
         pad_id: int = -1,
+        conditioner_type: str = "miche",
         miche_path: str = "",
         miche_ckpt_path: str = "",
         miche_config_path: str = "",
         miche_freeze: bool = True,
         miche_disable_checkpoint: bool = True,
+        ptv2_repo_path: str = "",
+        ptv2_encoder_ckpt: str = "",
+        ptv2_freeze: bool = True,
         max_seq_len: int = 1500,
         learning_rate: float = 3e-4,
         eta_min: float = 1e-4,
@@ -71,15 +76,26 @@ class MeshTransformer(LightningModule):
         self.sos_embed = nn.Parameter(torch.randn(dim))
         self.token_embed = nn.Embedding(self.vocab_size + 1, dim)
         self.abs_pos_emb = nn.Embedding(max_seq_len, dim)
+        self.conditioner_type = conditioner_type
 
-        self.conditioner = PointConditioner(
-            miche_path=miche_path,
-            miche_ckpt_path=miche_ckpt_path if miche_ckpt_path else None,
-            miche_config_path=miche_config_path if miche_config_path else None,
-            feature_dim=dim,
-            freeze=miche_freeze,
-            disable_checkpoint=miche_disable_checkpoint,
-        )
+        if conditioner_type == "miche":
+            self.conditioner = PointConditioner(
+                miche_path=miche_path,
+                miche_ckpt_path=miche_ckpt_path if miche_ckpt_path else None,
+                miche_config_path=miche_config_path if miche_config_path else None,
+                feature_dim=dim,
+                freeze=miche_freeze,
+                disable_checkpoint=miche_disable_checkpoint,
+            )
+        elif conditioner_type == "ptv2":
+            self.conditioner = PTV2Conditioner(
+                repo_path=ptv2_repo_path,
+                encoder_ckpt_path=ptv2_encoder_ckpt,
+                feature_dim=dim,
+                freeze=ptv2_freeze,
+            )
+        else:
+            raise ValueError(f"Unsupported conditioner_type: {conditioner_type}")
 
         # autoregressive attention network
         self.decoder = Decoder(

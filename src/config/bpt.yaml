@@ -19,11 +19,17 @@ model_config:
   # model
   decoder_config: { dim: 512, depth: 12, heads: 4, dropout: 0.0, cross_attn_num_mem_kv: 4, attn_flash: True, ff_glu: True, attn_qk_norm: True }
 
+  conditioner_type: miche
   miche_path: /home/kemove/devdata1/ljr/BPT/miche
   miche_ckpt_path: /home/kemove/devdata1/ljr/Michelangelo/runs/tallinn-shapevae-256-xyz/checkpoints/last.ckpt
   miche_config_path: /home/kemove/devdata1/ljr/Michelangelo/configs/aligned_shape_latents/tallinn-shapevae-256-xyz.yaml
   miche_freeze: True
   miche_disable_checkpoint: True
+
+  ptv2_repo_path: /home/kemove/devdata1/ljr/PointTransformerV2
+  ptv2_encoder_ckpt: ""
+  ptv2_freeze: True
+
   finetune: False
   base_ckpt: ""
 

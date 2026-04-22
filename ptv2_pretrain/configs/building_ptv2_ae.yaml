@@ -1,0 +1,48 @@
+seed: 42
+
+data:
+  data_root: /home/kemove/devdata1/ljr/dataset/Tallinn/ptv2_pretrain_npz
+  split_root: /home/kemove/devdata1/ljr/dataset/Tallinn/split
+  input_points: 4096
+  target_points: 2048
+  batch_size: 8
+  num_workers: 8
+  point_dropout: 0.1
+  jitter_sigma: 0.01
+  jitter_clip: 0.05
+  scale_min: 0.9
+  scale_max: 1.1
+
+model:
+  ptv2_repo_path: /home/kemove/devdata1/ljr/PointTransformerV2
+  variant: ptv2m2
+  in_channels: 3
+  num_cond_tokens: 256
+  patch_embed_depth: 1
+  patch_embed_channels: 48
+  patch_embed_groups: 6
+  patch_embed_neighbours: 8
+  enc_depths: [2, 2, 6, 2]
+  enc_channels: [96, 192, 384, 512]
+  enc_groups: [12, 24, 48, 64]
+  enc_neighbours: [16, 16, 16, 16]
+  grid_sizes: [0.06, 0.15, 0.375, 0.9375]
+  enable_checkpoint: false
+  output_points: 2048
+  decoder_hidden_dim: 1024
+  learning_rate: 0.0001
+  weight_decay: 0.05
+  eta_min: 0.000001
+
+trainer:
+  max_epochs: 200
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  log_every_n_steps: 10
+  gradient_clip_val: 1.0
+
+logging:
+  experiment_name: ptv2_building_ae
+  use_wandb: true
+  wandb_project: BPT-PTV2-Pretrain
