@@ -49,7 +49,7 @@ class PTV2EncoderWrapper(nn.Module):
         self.token_sample_mode = token_sample_mode
         if token_sample_mode not in {"fps", "linspace"}:
             raise ValueError(f"Unsupported token_sample_mode: {token_sample_mode}")
-        self.model_config = dict(
+        self.ptv2_model_config = dict(
             patch_embed_depth=patch_embed_depth,
             patch_embed_channels=patch_embed_channels,
             patch_embed_groups=patch_embed_groups,
@@ -60,6 +60,9 @@ class PTV2EncoderWrapper(nn.Module):
             enc_neighbours=enc_neighbours,
             grid_sizes=grid_sizes,
             enable_checkpoint=enable_checkpoint,
+        )
+        self.model_config = dict(
+            **self.ptv2_model_config,
             use_coord_token_embed=use_coord_token_embed,
             token_sample_mode=token_sample_mode,
         )
@@ -78,7 +81,7 @@ class PTV2EncoderWrapper(nn.Module):
             pe_bias=True,
             attn_drop_rate=0.0,
             drop_path_rate=0.0,
-            **self.model_config,
+            **self.ptv2_model_config,
         )
 
         self.patch_embed = base_model.patch_embed
