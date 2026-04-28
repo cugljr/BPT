@@ -59,16 +59,27 @@ def main() -> None:
         jitter_clip=float(data_cfg["jitter_clip"]),
         scale_min=float(data_cfg["scale_min"]),
         scale_max=float(data_cfg["scale_max"]),
+        rotation_prob=float(data_cfg.get("rotation_prob", 0.0)),
     )
 
     model = BuildingPointPretrainModule(
         repo_path=model_cfg["ptv2_repo_path"],
         variant=model_cfg["variant"],
         learning_rate=float(model_cfg["learning_rate"]),
+        encoder_learning_rate=(
+            float(model_cfg["encoder_learning_rate"])
+            if model_cfg.get("encoder_learning_rate") is not None
+            else None
+        ),
         weight_decay=float(model_cfg["weight_decay"]),
         eta_min=float(model_cfg["eta_min"]),
         output_points=int(model_cfg["output_points"]),
         decoder_hidden_dim=int(model_cfg["decoder_hidden_dim"]),
+        decoder_type=model_cfg.get("decoder_type", "cross_attention"),
+        decoder_layers=int(model_cfg.get("decoder_layers", 2)),
+        decoder_heads=int(model_cfg.get("decoder_heads", 8)),
+        decoder_ff_dim=int(model_cfg.get("decoder_ff_dim", 2048)),
+        decoder_dropout=float(model_cfg.get("decoder_dropout", 0.0)),
         in_channels=int(model_cfg["in_channels"]),
         num_cond_tokens=int(model_cfg["num_cond_tokens"]),
         patch_embed_depth=int(model_cfg["patch_embed_depth"]),
@@ -81,6 +92,8 @@ def main() -> None:
         enc_neighbours=tuple(model_cfg["enc_neighbours"]),
         grid_sizes=tuple(model_cfg["grid_sizes"]),
         enable_checkpoint=bool(model_cfg["enable_checkpoint"]),
+        use_coord_token_embed=bool(model_cfg.get("use_coord_token_embed", True)),
+        token_sample_mode=model_cfg.get("token_sample_mode", "fps"),
     )
 
     experiment_name = logging_cfg.get("experiment_name") or f"ptv2_pretrain_{datetime.now().strftime('%Y%m%d_%H%M%S')}"

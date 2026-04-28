@@ -10,7 +10,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from ptv2_pretrain.losses import chamfer_distance
-from ptv2_pretrain.models.decoder import GlobalPointDecoder
+from ptv2_pretrain.models.decoder import GlobalPointDecoder, TokenCrossAttentionPointDecoder
 from ptv2_pretrain.models.ptv2_encoder import PTV2EncoderWrapper
 
 
@@ -21,20 +21,40 @@ class BuildingPointAutoencoder(nn.Module):
         variant: str = "ptv2m2",
         output_points: int = 2048,
         decoder_hidden_dim: int = 1024,
+        decoder_type: str = "cross_attention",
+        decoder_layers: int = 2,
+        decoder_heads: int = 8,
+        decoder_ff_dim: int = 2048,
+        decoder_dropout: float = 0.0,
         **encoder_kwargs: Any,
     ) -> None:
         super().__init__()
         self.encoder = PTV2EncoderWrapper(repo_path=repo_path, variant=variant, **encoder_kwargs)
-        self.decoder = GlobalPointDecoder(
-            input_dim=self.encoder.encoder_channels,
-            hidden_dim=decoder_hidden_dim,
-            output_points=output_points,
-        )
+        self.decoder_type = decoder_type
+        if decoder_type == "global_mlp":
+            self.decoder = GlobalPointDecoder(
+                input_dim=self.encoder.encoder_channels,
+                hidden_dim=decoder_hidden_dim,
+                output_points=output_points,
+            )
+        elif decoder_type == "cross_attention":
+            self.decoder = TokenCrossAttentionPointDecoder(
+                input_dim=self.encoder.encoder_channels,
+                output_points=output_points,
+                num_layers=decoder_layers,
+                num_heads=decoder_heads,
+                ff_dim=decoder_ff_dim,
+                dropout=decoder_dropout,
+            )
+        else:
+            raise ValueError(f"Unsupported decoder_type: {decoder_type}")
 
     def forward(self, input_points: torch.Tensor) -> Dict[str, torch.Tensor]:
         cond_tokens = self.encoder(input_points)
-        global_token = cond_tokens[:, 0]
-        pred_points = self.decoder(global_token)
+        if self.decoder_type == "global_mlp":
+            pred_points = self.decoder(cond_tokens[:, 0])
+        else:
+            pred_points = self.decoder(cond_tokens)
         return {"pred_points": pred_points, "cond_tokens": cond_tokens}
 
 
@@ -44,10 +64,16 @@ class BuildingPointPretrainModule(LightningModule):
         repo_path: str,
         variant: str = "ptv2m2",
         learning_rate: float = 1e-4,
+        encoder_learning_rate: float | None = None,
         weight_decay: float = 0.05,
         eta_min: float = 1e-6,
         output_points: int = 2048,
         decoder_hidden_dim: int = 1024,
+        decoder_type: str = "cross_attention",
+        decoder_layers: int = 2,
+        decoder_heads: int = 8,
+        decoder_ff_dim: int = 2048,
+        decoder_dropout: float = 0.0,
         **encoder_kwargs: Any,
     ) -> None:
         super().__init__()
@@ -57,6 +83,11 @@ class BuildingPointPretrainModule(LightningModule):
             variant=variant,
             output_points=output_points,
             decoder_hidden_dim=decoder_hidden_dim,
+            decoder_type=decoder_type,
+            decoder_layers=decoder_layers,
+            decoder_heads=decoder_heads,
+            decoder_ff_dim=decoder_ff_dim,
+            decoder_dropout=decoder_dropout,
             **encoder_kwargs,
         )
 
@@ -85,9 +116,12 @@ class BuildingPointPretrainModule(LightningModule):
         return self._shared_step(batch, "val")
 
     def configure_optimizers(self):
+        encoder_lr = self.hparams.encoder_learning_rate or self.hparams.learning_rate
         optimizer = AdamW(
-            self.parameters(),
-            lr=self.hparams.learning_rate,
+            [
+                {"params": self.model.encoder.parameters(), "lr": encoder_lr},
+                {"params": self.model.decoder.parameters(), "lr": self.hparams.learning_rate},
+            ],
             weight_decay=self.hparams.weight_decay,
         )
         scheduler = CosineAnnealingLR(

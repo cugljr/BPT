@@ -24,6 +24,7 @@ class BuildingPointNPZDataset(Dataset):
         jitter_clip: float = 0.05,
         scale_min: float = 0.9,
         scale_max: float = 1.1,
+        rotation_prob: float = 0.0,
     ) -> None:
         self.data_root = Path(data_root)
         self.sample_ids = read_split_file(split_file)
@@ -35,6 +36,7 @@ class BuildingPointNPZDataset(Dataset):
         self.jitter_clip = jitter_clip
         self.scale_min = scale_min
         self.scale_max = scale_max
+        self.rotation_prob = rotation_prob
 
     def __len__(self) -> int:
         return len(self.sample_ids)
@@ -50,15 +52,16 @@ class BuildingPointNPZDataset(Dataset):
         if not self.augment:
             return points
 
-        if rng.random() < 0.9:
+        if self.rotation_prob > 0 and rng.random() < self.rotation_prob:
             angle = rng.uniform(0.0, 2.0 * np.pi)
             cos_a = np.cos(angle)
             sin_a = np.sin(angle)
             rot = np.array([[cos_a, -sin_a, 0.0], [sin_a, cos_a, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
             points = points @ rot.T
 
-        scale = rng.uniform(self.scale_min, self.scale_max)
-        points = points * scale
+        if self.scale_min != 1.0 or self.scale_max != 1.0:
+            scale = rng.uniform(self.scale_min, self.scale_max)
+            points = points * scale
 
         if self.point_dropout > 0 and rng.random() < 0.8:
             keep_mask = rng.random(points.shape[0]) > self.point_dropout
@@ -106,6 +109,7 @@ class BuildingPointDataModule(LightningDataModule):
         jitter_clip: float = 0.05,
         scale_min: float = 0.9,
         scale_max: float = 1.1,
+        rotation_prob: float = 0.0,
     ) -> None:
         super().__init__()
         split_root = Path(split_root)
@@ -120,6 +124,7 @@ class BuildingPointDataModule(LightningDataModule):
             jitter_clip=jitter_clip,
             scale_min=scale_min,
             scale_max=scale_max,
+            rotation_prob=rotation_prob,
         )
         self.val_dataset = BuildingPointNPZDataset(
             data_root=data_root,

@@ -5,7 +5,7 @@ from typing import Any, Dict, Tuple
 import torch
 from torch import nn
 
-from ptv2_pretrain.utils import ensure_ptv2_repo, resample_tokens, split_offsets
+from ptv2_pretrain.utils import ensure_ptv2_repo, split_offsets
 
 
 def _import_ptv2_class(repo_path: str, variant: str):
@@ -36,6 +36,8 @@ class PTV2EncoderWrapper(nn.Module):
         enc_neighbours: tuple[int, ...] = (16, 16, 16, 16),
         grid_sizes: tuple[float, ...] = (0.06, 0.15, 0.375, 0.9375),
         enable_checkpoint: bool = False,
+        use_coord_token_embed: bool = True,
+        token_sample_mode: str = "fps",
     ) -> None:
         super().__init__()
         self.repo_path = str(ensure_ptv2_repo(repo_path))
@@ -43,6 +45,10 @@ class PTV2EncoderWrapper(nn.Module):
         self.in_channels = in_channels
         self.num_cond_tokens = num_cond_tokens
         self.encoder_channels = enc_channels[-1]
+        self.use_coord_token_embed = use_coord_token_embed
+        self.token_sample_mode = token_sample_mode
+        if token_sample_mode not in {"fps", "linspace"}:
+            raise ValueError(f"Unsupported token_sample_mode: {token_sample_mode}")
         self.model_config = dict(
             patch_embed_depth=patch_embed_depth,
             patch_embed_channels=patch_embed_channels,
@@ -54,6 +60,8 @@ class PTV2EncoderWrapper(nn.Module):
             enc_neighbours=enc_neighbours,
             grid_sizes=grid_sizes,
             enable_checkpoint=enable_checkpoint,
+            use_coord_token_embed=use_coord_token_embed,
+            token_sample_mode=token_sample_mode,
         )
 
         ptv2_cls = _import_ptv2_class(self.repo_path, variant)
@@ -75,6 +83,11 @@ class PTV2EncoderWrapper(nn.Module):
 
         self.patch_embed = base_model.patch_embed
         self.enc_stages = base_model.enc_stages
+        self.coord_token_embed = nn.Sequential(
+            nn.Linear(3, self.encoder_channels),
+            nn.GELU(),
+            nn.Linear(self.encoder_channels, self.encoder_channels),
+        ) if use_coord_token_embed else nn.Identity()
 
     @staticmethod
     def pack_batch(pc_xyz: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -102,18 +115,53 @@ class PTV2EncoderWrapper(nn.Module):
             points, _ = enc_stage(points)
         return points
 
-    def build_condition_tokens(self, feat: torch.Tensor, offset: torch.Tensor) -> torch.Tensor:
-        token_chunks = split_offsets(feat, offset)
+    @staticmethod
+    def _linspace_indices(token_count: int, num_tokens: int, device: torch.device) -> torch.Tensor:
+        if token_count == num_tokens:
+            return torch.arange(token_count, device=device, dtype=torch.long)
+        if token_count > num_tokens:
+            return torch.linspace(0, token_count - 1, steps=num_tokens, device=device).round().long()
+        repeat = int((num_tokens + token_count - 1) // token_count)
+        return torch.arange(token_count, device=device, dtype=torch.long).repeat(repeat)[:num_tokens]
+
+    @staticmethod
+    def _fps_indices(coord: torch.Tensor, num_tokens: int) -> torch.Tensor:
+        token_count = coord.shape[0]
+        if token_count <= num_tokens:
+            repeat = int((num_tokens + token_count - 1) // token_count)
+            return torch.arange(token_count, device=coord.device, dtype=torch.long).repeat(repeat)[:num_tokens]
+
+        selected = torch.empty(num_tokens, device=coord.device, dtype=torch.long)
+        centroid = coord.mean(dim=0, keepdim=True)
+        current = ((coord - centroid) ** 2).sum(dim=-1).argmin()
+        min_dist = torch.full((token_count,), float("inf"), device=coord.device, dtype=coord.dtype)
+        for i in range(num_tokens):
+            selected[i] = current
+            dist = ((coord - coord[current]) ** 2).sum(dim=-1)
+            min_dist = torch.minimum(min_dist, dist)
+            current = min_dist.argmax()
+        return selected
+
+    def _sample_indices(self, coord: torch.Tensor, num_tokens: int) -> torch.Tensor:
+        if self.token_sample_mode == "fps":
+            return self._fps_indices(coord, num_tokens)
+        return self._linspace_indices(coord.shape[0], num_tokens, coord.device)
+
+    def build_condition_tokens(self, coord: torch.Tensor, feat: torch.Tensor, offset: torch.Tensor) -> torch.Tensor:
+        coord_chunks = split_offsets(coord, offset)
+        feat_chunks = split_offsets(feat, offset)
         cond_tokens = []
-        for chunk in token_chunks:
-            sampled = resample_tokens(chunk, self.num_cond_tokens)
-            head = chunk.mean(dim=0, keepdim=True)
+        for coord_chunk, feat_chunk in zip(coord_chunks, feat_chunks):
+            feat_chunk = feat_chunk + self.coord_token_embed(coord_chunk)
+            indices = self._sample_indices(coord_chunk, self.num_cond_tokens)
+            sampled = feat_chunk.index_select(0, indices)
+            head = feat_chunk.mean(dim=0, keepdim=True)
             cond_tokens.append(torch.cat([head, sampled], dim=0))
         return torch.stack(cond_tokens, dim=0)
 
     def forward(self, pc_xyz: torch.Tensor) -> torch.Tensor:
-        _, feat, offset = self.encode_backbone(pc_xyz)
-        return self.build_condition_tokens(feat, offset)
+        coord, feat, offset = self.encode_backbone(pc_xyz)
+        return self.build_condition_tokens(coord, feat, offset)
 
     def export_state(self) -> Dict[str, Any]:
         return {

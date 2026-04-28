@@ -7,11 +7,12 @@ data:
   target_points: 2048
   batch_size: 8
   num_workers: 8
-  point_dropout: 0.1
-  jitter_sigma: 0.01
-  jitter_clip: 0.05
-  scale_min: 0.9
-  scale_max: 1.1
+  point_dropout: 0.05
+  jitter_sigma: 0.005
+  jitter_clip: 0.02
+  scale_min: 1.0
+  scale_max: 1.0
+  rotation_prob: 0.0
 
 model:
   ptv2_repo_path: /home/kemove/devdata1/ljr/PointTransformerV2
@@ -28,9 +29,17 @@ model:
   enc_neighbours: [16, 16, 16, 16]
   grid_sizes: [0.06, 0.15, 0.375, 0.9375]
   enable_checkpoint: false
+  use_coord_token_embed: true
+  token_sample_mode: fps
   output_points: 2048
   decoder_hidden_dim: 1024
+  decoder_type: cross_attention
+  decoder_layers: 2
+  decoder_heads: 8
+  decoder_ff_dim: 2048
+  decoder_dropout: 0.0
   learning_rate: 0.0001
+  encoder_learning_rate: 0.00005
   weight_decay: 0.05
   eta_min: 0.000001
 
