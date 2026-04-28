@@ -96,6 +96,10 @@ class BuildingPointPretrainModule(LightningModule):
 
     def _shared_step(self, batch: Dict[str, torch.Tensor], stage: str) -> torch.Tensor:
         outputs = self.model(batch["input_points"])
+        if not torch.isfinite(outputs["cond_tokens"]).all():
+            raise FloatingPointError(f"{stage} cond_tokens contains NaN or Inf")
+        if not torch.isfinite(outputs["pred_points"]).all():
+            raise FloatingPointError(f"{stage} pred_points contains NaN or Inf")
         loss = chamfer_distance(outputs["pred_points"], batch["target_points"])
         self.log(
             f"{stage}/chamfer",

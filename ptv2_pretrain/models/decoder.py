@@ -82,4 +82,4 @@ class TokenCrossAttentionPointDecoder(nn.Module):
             queries = queries + attended
             queries = queries + layer["ff"](layer["ff_norm"](queries))
         queries = self.norm(queries)
-        return self.to_points(queries)
+        return torch.tanh(self.to_points(queries))

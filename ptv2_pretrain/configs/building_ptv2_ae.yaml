@@ -38,8 +38,8 @@ model:
   decoder_heads: 8
   decoder_ff_dim: 2048
   decoder_dropout: 0.0
-  learning_rate: 0.0001
-  encoder_learning_rate: 0.00005
+  learning_rate: 0.00005
+  encoder_learning_rate: 0.00001
   weight_decay: 0.05
   eta_min: 0.000001
 
@@ -47,7 +47,7 @@ trainer:
   max_epochs: 200
   accelerator: gpu
   devices: 1
-  precision: 16-mixed
+  precision: 32-true
   log_every_n_steps: 10
   gradient_clip_val: 1.0
 
