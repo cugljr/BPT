@@ -12,14 +12,16 @@ model_config:
   max_seq_len: 2000 # > 0.25 * 500 * 9
 
   # training
-  batch_size: 16
-  accumulate_grad_batches: 1
-  gradient_clip_val: 1
+  batch_size: 4
+  accumulate_grad_batches: 4
+  gradient_clip_val: 0.5
 
   # model
-  decoder_config: { dim: 512, depth: 12, heads: 4, dropout: 0.0, cross_attn_num_mem_kv: 4, attn_flash: True, ff_glu: True, attn_qk_norm: True }
+  decoder_config: { dim: 512, depth: 12, heads: 4, dropout: 0.0, cross_attn_num_mem_kv: 4, attn_flash: False, ff_glu: True, attn_qk_norm: True }
 
-  conditioner_type: miche
+  conditioner_type: ptv2
+
+  #conditioner_type: miche
   miche_path: /home/kemove/devdata1/ljr/BPT/miche
   miche_ckpt_path: /home/kemove/devdata1/ljr/Michelangelo/runs/tallinn-shapevae-256-xyz/checkpoints/last.ckpt
   miche_config_path: /home/kemove/devdata1/ljr/Michelangelo/configs/aligned_shape_latents/tallinn-shapevae-256-xyz.yaml
@@ -27,8 +29,8 @@ model_config:
   miche_disable_checkpoint: True
 
   ptv2_repo_path: /home/kemove/devdata1/ljr/PointTransformerV2
-  ptv2_encoder_ckpt: ""
-  ptv2_freeze: True
+  ptv2_encoder_ckpt: /home/kemove/devdata1/ljr/BPT/runs/ptv2_building_ae_v3/checkpoints/encoder_best.pt
+  ptv2_freeze: False
 
   finetune: False
   base_ckpt: ""
@@ -36,4 +38,7 @@ model_config:
   # training config
   learning_rate: 3e-4
   eta_min: 1e-4
-  epochs: 500
+  epochs: 200
+
+
+

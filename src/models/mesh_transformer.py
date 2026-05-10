@@ -126,6 +126,9 @@ class MeshTransformer(LightningModule):
         # handle conditions
         if cond_embeds is None:
             cond_embeds = self.conditioner(pc_xyz)
+        cond_embeds = cond_embeds.float()
+        if not torch.isfinite(cond_embeds).all():
+            raise FloatingPointError("condition embeddings contain NaN or Inf")
 
         # prepare mask for position embedding of block and offset tokens
         block_mask = (0 <= codes) & (codes < self.block_val)
@@ -185,9 +188,13 @@ class MeshTransformer(LightningModule):
             context=cond_embeds,
             context_mask=None,
         )
+        if not torch.isfinite(attended).all():
+            raise FloatingPointError("decoder hidden states contain NaN or Inf")
 
         # logits
         logits = self.to_logits(attended)
+        if not torch.isfinite(logits).all():
+            raise FloatingPointError("decoder logits contain NaN or Inf")
 
         if not return_loss:
             if not return_cache:
@@ -196,7 +203,7 @@ class MeshTransformer(LightningModule):
 
         # loss
         labels = labels.contiguous().view(-1).long()
-        logits = logits.contiguous().view(-1, self.vocab_size + 1)
+        logits = logits.float().contiguous().view(-1, self.vocab_size + 1)
         loss_ce = F.cross_entropy(logits, labels, ignore_index=self.pad_id)
         acc = accuracy(logits, labels, ignore_label=self.pad_id)
         return loss_ce, acc

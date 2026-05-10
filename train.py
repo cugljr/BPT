@@ -53,7 +53,7 @@ def main() -> None:
         max_epochs=epochs,
         accelerator="gpu",
         devices=[1],
-        precision="16-mixed",
+        precision="32-true",
         log_every_n_steps=1,
         gradient_clip_val=gradient_clip_val,
         accumulate_grad_batches=accumulate_grad_batches,

@@ -5,7 +5,7 @@ data:
   split_root: /home/kemove/devdata1/ljr/dataset/Tallinn/split
   input_points: 4096
   target_points: 2048
-  batch_size: 8
+  batch_size: 16
   num_workers: 8
   point_dropout: 0.05
   jitter_sigma: 0.005
@@ -52,6 +52,6 @@ trainer:
   gradient_clip_val: 1.0
 
 logging:
-  experiment_name: ptv2_building_ae
+  experiment_name: ptv2_building_ae_v3
   use_wandb: true
   wandb_project: BPT-PTV2-Pretrain
