@@ -32,13 +32,13 @@ model_config:
   ptv2_encoder_ckpt: /home/kemove/devdata1/ljr/BPT/runs/ptv2_building_ae_v3/checkpoints/encoder_best.pt
   ptv2_freeze: False
 
-  finetune: False
-  base_ckpt: ""
+  finetune: True
+  base_ckpt: /home/kemove/devdata1/ljr/BPT/runs/bpt_similar-deposition/checkpoints/best.ckpt
 
   # training config
-  learning_rate: 3e-4
-  eta_min: 1e-4
-  epochs: 200
+  learning_rate: 3e-5
+  eta_min: 3e-6
+  epochs: 500
 
 
 

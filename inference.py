@@ -27,7 +27,7 @@ def get_args():
         "--ckpt_type",
         type=str,
         choices=["best", "last"],
-        default="last",
+        default="best",
         help="Checkpoint type to load",
     )
     parser.add_argument(
@@ -39,8 +39,26 @@ def get_args():
     parser.add_argument(
         "--n_trial",
         type=int,
-        default=5,
+        default=20,
         help="Number of trials for inference",
+    )
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        default=20,
+        help="Top-k sampling value for autoregressive generation",
+    )
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=0.9,
+        help="Top-p sampling value for autoregressive generation",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.25,
+        help="Sampling temperature for autoregressive generation",
     )
     parser.add_argument(
         "--use_vertices",
@@ -130,7 +148,7 @@ def load_mesh_pc(mesh_path, device, decimation, decimation_target_nfaces, n_poin
     # Point cloud sampling
     vertices = pc_norm(vertices)
     mesh = trimesh.Trimesh(vertices=vertices, faces=triangles)
-    pc_sample = sample_pc(mesh, args.n_points)
+    pc_sample = sample_pc(mesh, n_points)
     pc_sample_tensor = (
         torch.tensor(pc_sample).unsqueeze(0).to(dtype=torch.float32, device=device)
     )
@@ -141,20 +159,57 @@ def reorganize_mesh(codes, model):
     codes = codes[codes != model.pad_id].cpu().numpy()
     vertices = BPT_deserialize(codes, model.block_size, model.offset_size)
     n = vertices.shape[0]
+    if n < 3 or n % 3 != 0:
+        raise ValueError(f"Generated invalid vertex count: {n}")
     faces = torch.arange(1, n + 1).view(-1, 3).numpy()
     mesh = to_mesh(vertices, faces, transpose=False, post_process=True)
     return mesh
 
 
-def inference_codes(model, pc_input, mesh_gt, n_points, n_trial=5):
+def has_sampleable_faces(mesh: trimesh.Trimesh) -> bool:
+    return (
+        mesh is not None
+        and hasattr(mesh, "vertices")
+        and hasattr(mesh, "faces")
+        and len(mesh.vertices) >= 3
+        and len(mesh.faces) > 0
+    )
+
+
+def inference_codes(
+    model,
+    pc_input,
+    mesh_gt,
+    n_points,
+    n_trial=5,
+    top_k=20,
+    top_p=0.9,
+    temperature=0.3,
+):
     best_cd = float("inf")
     best_mesh = None
-    for _ in range(n_trial):
+    failed_trials = 0
+    for trial_idx in range(n_trial):
         with torch.no_grad():
-            codes = model.generate(pc_input, top_k=50, top_p=0.95, temperature=0.5)
-        mesh_pred = reorganize_mesh(codes[0], model)
-        mesh_pred_sample = sample_pc(mesh_pred, n_points)
-        mesh_gt_sample = sample_pc(mesh_gt, n_points)
+            codes = model.generate(
+                pc_input,
+                top_k=top_k,
+                top_p=top_p,
+                temperature=temperature,
+            )
+        try:
+            mesh_pred = reorganize_mesh(codes[0], model)
+            if not has_sampleable_faces(mesh_pred):
+                raise ValueError(
+                    f"Generated mesh has {len(mesh_pred.vertices)} vertices and {len(mesh_pred.faces)} faces"
+                )
+            mesh_pred_sample = sample_pc(mesh_pred, n_points)
+            mesh_gt_sample = sample_pc(mesh_gt, n_points)
+        except Exception as exc:
+            failed_trials += 1
+            print(f"[WARNING] Skip invalid generation trial {trial_idx + 1}/{n_trial}: {exc}")
+            continue
+
         mesh_pred_sample = torch.tensor(mesh_pred_sample)
         mesh_gt_sample = torch.tensor(mesh_gt_sample)
         cd = compute_chamfer_distance(mesh_pred_sample, mesh_gt_sample)
@@ -162,6 +217,10 @@ def inference_codes(model, pc_input, mesh_gt, n_points, n_trial=5):
         if cd < best_cd:
             best_cd = cd
             best_mesh = mesh_pred
+    if best_mesh is None:
+        raise RuntimeError(f"All {n_trial} generation trials produced invalid meshes")
+    if failed_trials:
+        print(f"[WARNING] Invalid generation trials: {failed_trials}/{n_trial}")
     return best_mesh
 
 
@@ -229,9 +288,20 @@ def infer_dataset(args):
             continue
 
         start_time = time.time()
-        mesh_pred = inference_codes(
-            model, pc_input, mesh_gt, args.n_points, args.n_trial
-        )
+        try:
+            mesh_pred = inference_codes(
+                model,
+                pc_input,
+                mesh_gt,
+                args.n_points,
+                args.n_trial,
+                args.top_k,
+                args.top_p,
+                args.temperature,
+            )
+        except RuntimeError as exc:
+            print(f"[WARNING] Failed to infer {file_path}: {exc}")
+            continue
         end_time = time.time()
 
         pc_input_np = pc_input.squeeze(0).cpu().numpy()
