@@ -61,6 +61,28 @@ def get_args():
         help="Sampling temperature for autoregressive generation",
     )
     parser.add_argument(
+        "--max_seq_len",
+        type=int,
+        default=0,
+        help="Generation length. 0 means use the checkpoint model max_seq_len.",
+    )
+    parser.add_argument(
+        "--disable_grammar_mask",
+        action="store_true",
+        help="Disable BPT token grammar masking during generation.",
+    )
+    parser.add_argument(
+        "--greedy",
+        action="store_true",
+        help="Use argmax decoding instead of multinomial sampling.",
+    )
+    parser.add_argument(
+        "--topology_weight",
+        type=float,
+        default=0.001,
+        help="Weight for vertex/face/short-edge count penalty when choosing the best trial.",
+    )
+    parser.add_argument(
         "--use_vertices",
         action="store_true",
         help="Use mesh vertices as base points",
@@ -70,6 +92,12 @@ def get_args():
         type=int,
         default=4096,
         help="Number of points to sample from the mesh",
+    )
+    parser.add_argument(
+        "--vertex_sample_ratio",
+        type=float,
+        default=0.0,
+        help="Ratio of mesh vertices mixed into OBJ point-cloud conditioning.",
     )
     parser.add_argument(
         "--decimation",
@@ -127,7 +155,14 @@ def load_partial_pc(partial_path, n_points, device, use_vertices, gt_vertices=No
     return pc_partial_tensor
 
 
-def load_mesh_pc(mesh_path, device, decimation, decimation_target_nfaces, n_points):
+def load_mesh_pc(
+    mesh_path,
+    device,
+    decimation,
+    decimation_target_nfaces,
+    n_points,
+    vertex_sample_ratio,
+):
     vertices, triangles = read_triangle_mesh(mesh_path)
     # Mesh decimation
     if decimation:
@@ -148,7 +183,7 @@ def load_mesh_pc(mesh_path, device, decimation, decimation_target_nfaces, n_poin
     # Point cloud sampling
     vertices = pc_norm(vertices)
     mesh = trimesh.Trimesh(vertices=vertices, faces=triangles)
-    pc_sample = sample_pc(mesh, n_points)
+    pc_sample = sample_pc_with_vertices(mesh, n_points, vertex_sample_ratio)
     pc_sample_tensor = (
         torch.tensor(pc_sample).unsqueeze(0).to(dtype=torch.float32, device=device)
     )
@@ -176,6 +211,52 @@ def has_sampleable_faces(mesh: trimesh.Trimesh) -> bool:
     )
 
 
+def mesh_edge_stats(mesh: trimesh.Trimesh, short_threshold=0.1) -> dict:
+    edges = getattr(mesh, "edges_unique", None)
+    if edges is None or len(edges) == 0:
+        return {"edge_count": 0, "short_edge_count": 0, "edge_median": 0.0}
+
+    vertices = np.asarray(mesh.vertices)
+    edge_lengths = np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1)
+    return {
+        "edge_count": int(len(edge_lengths)),
+        "short_edge_count": int((edge_lengths < short_threshold).sum()),
+        "edge_median": float(np.median(edge_lengths)),
+    }
+
+
+def topology_penalty(mesh_pred: trimesh.Trimesh, mesh_gt: trimesh.Trimesh) -> float:
+    pred_edges = mesh_edge_stats(mesh_pred)
+    gt_edges = mesh_edge_stats(mesh_gt)
+
+    def ratio_penalty(pred_value, gt_value):
+        return abs(np.log((float(pred_value) + 1.0) / (float(gt_value) + 1.0)))
+
+    return (
+        ratio_penalty(len(mesh_pred.vertices), len(mesh_gt.vertices))
+        + ratio_penalty(len(mesh_pred.faces), len(mesh_gt.faces))
+        + ratio_penalty(pred_edges["short_edge_count"], gt_edges["short_edge_count"])
+    )
+
+
+def mesh_diagnostics(mesh_pred: trimesh.Trimesh, mesh_gt: trimesh.Trimesh) -> dict:
+    pred_edges = mesh_edge_stats(mesh_pred)
+    gt_edges = mesh_edge_stats(mesh_gt)
+    return {
+        "count_verts_gt": len(mesh_gt.vertices),
+        "count_faces_gt": len(mesh_gt.faces),
+        "count_edges": pred_edges["edge_count"],
+        "count_edges_gt": gt_edges["edge_count"],
+        "short_edges_0p1": pred_edges["short_edge_count"],
+        "short_edges_0p1_gt": gt_edges["short_edge_count"],
+        "edge_median": round(pred_edges["edge_median"], 6),
+        "edge_median_gt": round(gt_edges["edge_median"], 6),
+        "vert_ratio": round(len(mesh_pred.vertices) / max(len(mesh_gt.vertices), 1), 4),
+        "face_ratio": round(len(mesh_pred.faces) / max(len(mesh_gt.faces), 1), 4),
+    }
+
+
+        # 记录最优
 def inference_codes(
     model,
     pc_input,
@@ -185,17 +266,27 @@ def inference_codes(
     top_k=20,
     top_p=0.9,
     temperature=0.3,
+    max_seq_len=0,
+    grammar_mask=True,
+    greedy=False,
+    topology_weight=0.001,
 ):
-    best_cd = float("inf")
+    best_score = float("inf")
     best_mesh = None
+    best_info = None
     failed_trials = 0
+    resolved_max_seq_len = model.max_seq_len if max_seq_len <= 0 else max_seq_len
+
     for trial_idx in range(n_trial):
         with torch.no_grad():
             codes = model.generate(
                 pc_input,
+                max_seq_len=resolved_max_seq_len,
                 top_k=top_k,
                 top_p=top_p,
                 temperature=temperature,
+                grammar_mask=grammar_mask,
+                greedy=greedy,
             )
         try:
             mesh_pred = reorganize_mesh(codes[0], model)
@@ -210,18 +301,31 @@ def inference_codes(
             print(f"[WARNING] Skip invalid generation trial {trial_idx + 1}/{n_trial}: {exc}")
             continue
 
-        mesh_pred_sample = torch.tensor(mesh_pred_sample)
-        mesh_gt_sample = torch.tensor(mesh_gt_sample)
         cd = compute_chamfer_distance(mesh_pred_sample, mesh_gt_sample)
-        # 记录最优
-        if cd < best_cd:
-            best_cd = cd
+        topo_penalty = topology_penalty(mesh_pred, mesh_gt)
+        selection_score = cd + topology_weight * topo_penalty
+        generated_tokens = int((codes[0] != model.pad_id).sum().item())
+        hit_max_seq_len = generated_tokens >= resolved_max_seq_len
+
+        if selection_score < best_score:
+            best_score = selection_score
             best_mesh = mesh_pred
+            best_info = {
+                "chamfer": round(float(cd), 8),
+                "topology_penalty": round(float(topo_penalty), 6),
+                "selection_score": round(float(selection_score), 8),
+                "generated_tokens": generated_tokens,
+                "hit_max_seq_len": hit_max_seq_len,
+            }
+
     if best_mesh is None:
         raise RuntimeError(f"All {n_trial} generation trials produced invalid meshes")
     if failed_trials:
         print(f"[WARNING] Invalid generation trials: {failed_trials}/{n_trial}")
-    return best_mesh
+
+    best_info["failed_trials"] = failed_trials
+    best_info.update(mesh_diagnostics(best_mesh, mesh_gt))
+    return best_mesh, best_info
 
 
 def save_outputs(
@@ -280,6 +384,7 @@ def infer_dataset(args):
                 args.decimation,
                 args.decimation_target_nfaces,
                 args.n_points,
+                args.vertex_sample_ratio,
             )
         else:
             print(
@@ -289,7 +394,7 @@ def infer_dataset(args):
 
         start_time = time.time()
         try:
-            mesh_pred = inference_codes(
+            mesh_pred, infer_info = inference_codes(
                 model,
                 pc_input,
                 mesh_gt,
@@ -298,6 +403,10 @@ def infer_dataset(args):
                 args.top_k,
                 args.top_p,
                 args.temperature,
+                args.max_seq_len,
+                not args.disable_grammar_mask,
+                args.greedy,
+                args.topology_weight,
             )
         except RuntimeError as exc:
             print(f"[WARNING] Failed to infer {file_path}: {exc}")
@@ -318,6 +427,7 @@ def infer_dataset(args):
                 "count_verts": count_verts,
                 "count_faces": count_faces,
                 "inference_time": inference_time,
+                **infer_info,
             }
         )
         face_color = np.array([120, 154, 192, 255], dtype=np.uint8)

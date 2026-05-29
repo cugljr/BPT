@@ -360,6 +360,34 @@ def sample_pc(mesh, n_points):
     return np.asarray(points, dtype=np.float32)
 
 
+def sample_pc_with_vertices(mesh, n_points, vertex_ratio=0.25):
+    if vertex_ratio <= 0:
+        return sample_pc(mesh, n_points)
+
+    vertices = np.asarray(mesh.vertices, dtype=np.float32)
+    if len(vertices) == 0:
+        return sample_pc(mesh, n_points)
+
+    n_vertex = int(round(n_points * vertex_ratio))
+    n_vertex = min(max(n_vertex, 1), n_points)
+    n_surface = n_points - n_vertex
+
+    if len(vertices) >= n_vertex:
+        vertex_indices = np.random.choice(len(vertices), n_vertex, replace=False)
+    else:
+        vertex_indices = np.random.choice(len(vertices), n_vertex, replace=True)
+    vertex_points = vertices[vertex_indices]
+
+    if n_surface > 0:
+        surface_points = sample_pc(mesh, n_surface)
+        points = np.concatenate([surface_points, vertex_points], axis=0)
+    else:
+        points = vertex_points
+
+    order = np.random.permutation(len(points))
+    return points[order].astype(np.float32)
+
+
 if __name__ == "__main__":
     from tqdm import tqdm
     import os

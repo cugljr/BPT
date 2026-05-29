@@ -7,6 +7,7 @@ model_config:
   augment: True
   num_discrete: 128
   n_points: 4096
+  vertex_sample_ratio: 0.0
   block_size: 8
   offset_size: 16
   max_seq_len: 2000 # > 0.25 * 500 * 9
@@ -20,6 +21,11 @@ model_config:
   decoder_config: { dim: 512, depth: 12, heads: 4, dropout: 0.0, cross_attn_num_mem_kv: 4, attn_flash: False, ff_glu: True, attn_qk_norm: True }
 
   conditioner_type: ptv2
+  grammar_mask: True
+  loss_weight_block: 2.0
+  loss_weight_offset: 1.0
+  loss_weight_special_block: 3.0
+  loss_weight_eos: 3.0
 
   #conditioner_type: miche
   miche_path: /home/kemove/devdata1/ljr/BPT/miche

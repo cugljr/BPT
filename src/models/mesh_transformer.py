@@ -2,9 +2,8 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 from einops import rearrange, repeat, pack
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any
 from x_transformers import Decoder
-from x_transformers.autoregressive_wrapper import top_k
 from tqdm import tqdm
 from lightning.pytorch import LightningModule
 from src.models.miche_conditioner import PointConditioner
@@ -40,6 +39,11 @@ class MeshTransformer(LightningModule):
         eta_min: float = 1e-4,
         warmup_steps: int = 1600,
         cosine_steps: int = 16000,
+        loss_weight_block: float = 2.0,
+        loss_weight_offset: float = 1.0,
+        loss_weight_special_block: float = 3.0,
+        loss_weight_eos: float = 3.0,
+        grammar_mask: bool = True,
     ):
         super(MeshTransformer, self).__init__()
         self.save_hyperparameters()
@@ -69,6 +73,11 @@ class MeshTransformer(LightningModule):
         self.eta_min = eta_min
         self.warmup_steps = warmup_steps
         self.cosine_steps = cosine_steps
+        self.loss_weight_block = loss_weight_block
+        self.loss_weight_offset = loss_weight_offset
+        self.loss_weight_special_block = loss_weight_special_block
+        self.loss_weight_eos = loss_weight_eos
+        self.grammar_mask = grammar_mask
 
         self.sp_block_embed = nn.Parameter(torch.randn(1, dim))
         self.block_embed = nn.Parameter(torch.randn(1, dim))
@@ -113,6 +122,147 @@ class MeshTransformer(LightningModule):
         )
         self.to_logits = nn.Linear(dim, self.vocab_size + 1)
 
+    def _token_type_masks(self, tokens: Tensor) -> Dict[str, Tensor]:
+        valid = tokens != self.pad_id
+        block = (0 <= tokens) & (tokens < self.block_val)
+        offset = (self.block_val <= tokens) & (
+            tokens < self.block_val + self.offset_val
+        )
+        special_block = (self.block_val + self.offset_val <= tokens) & (
+            tokens < self.block_val + self.offset_val + self.block_val
+        )
+        eos = tokens == self.eos_token_id
+        return {
+            "valid": valid,
+            "block": block,
+            "offset": offset,
+            "special_block": special_block,
+            "eos": eos,
+        }
+
+    def _accuracy_from_pred(
+        self, pred: Tensor, labels: Tensor, mask: Tensor
+    ) -> Tensor:
+        mask = mask & (labels != self.pad_id)
+        denom = mask.sum()
+        if denom.item() == 0:
+            return torch.zeros((), device=labels.device)
+        return ((pred == labels) & mask).float().sum() / denom.float()
+
+    def _loss_and_metrics(self, logits: Tensor, labels: Tensor):
+        labels_flat = labels.contiguous().view(-1).long()
+        logits_flat = logits.float().contiguous().view(-1, self.vocab_size + 1)
+        masks = self._token_type_masks(labels_flat)
+        valid = masks["valid"]
+
+        per_token_loss = F.cross_entropy(
+            logits_flat,
+            labels_flat,
+            ignore_index=self.pad_id,
+            reduction="none",
+        )
+        token_weights = torch.ones_like(per_token_loss)
+        token_weights[masks["block"]] = self.loss_weight_block
+        token_weights[masks["offset"]] = self.loss_weight_offset
+        token_weights[masks["special_block"]] = self.loss_weight_special_block
+        token_weights[masks["eos"]] = self.loss_weight_eos
+
+        denom = token_weights[valid].sum().clamp_min(1.0)
+        loss_ce = (per_token_loss[valid] * token_weights[valid]).sum() / denom
+        loss_ce_unweighted = per_token_loss[valid].mean() if valid.any().item() else loss_ce
+
+        pred_flat = logits_flat.argmax(dim=-1)
+        pred = pred_flat.view_as(labels)
+        label_mask = labels != self.pad_id
+        seq_exact = (((pred == labels) | ~label_mask).all(dim=-1)).float().mean()
+
+        metrics = {
+            "acc": self._accuracy_from_pred(pred_flat, labels_flat, valid),
+            "block_acc": self._accuracy_from_pred(
+                pred_flat, labels_flat, masks["block"]
+            ),
+            "offset_acc": self._accuracy_from_pred(
+                pred_flat, labels_flat, masks["offset"]
+            ),
+            "special_block_acc": self._accuracy_from_pred(
+                pred_flat, labels_flat, masks["special_block"]
+            ),
+            "eos_acc": self._accuracy_from_pred(pred_flat, labels_flat, masks["eos"]),
+            "seq_exact": seq_exact,
+            "loss_ce_unweighted": loss_ce_unweighted,
+        }
+        return loss_ce, metrics
+
+    def _log_train_val_metrics(
+        self,
+        stage: str,
+        loss_ce: Tensor,
+        metrics: Dict[str, Tensor],
+        batch_size: int,
+        on_step: bool,
+        on_epoch: bool,
+    ) -> None:
+        self.log(
+            f"{stage}/loss_ce",
+            loss_ce,
+            on_step=on_step,
+            on_epoch=on_epoch,
+            prog_bar=True,
+            logger=True,
+            sync_dist=True,
+            batch_size=batch_size,
+        )
+        for name, value in metrics.items():
+            self.log(
+                f"{stage}/{name}",
+                value,
+                on_step=on_step,
+                on_epoch=on_epoch,
+                prog_bar=name == "acc",
+                logger=True,
+                sync_dist=True,
+                batch_size=batch_size,
+            )
+
+    def _apply_bpt_grammar_mask(self, logits: Tensor, codes: Tensor) -> Tensor:
+        allowed = torch.zeros_like(logits, dtype=torch.bool)
+
+        if codes.shape[-1] == 0:
+            allowed[:, : self.block_val] = True
+        else:
+            last_token = codes[:, -1]
+            after_block = (
+                ((0 <= last_token) & (last_token < self.block_val))
+                | (
+                    (self.block_val + self.offset_val <= last_token)
+                    & (last_token < self.block_val + self.offset_val + self.block_val)
+                )
+            )
+            after_offset = (self.block_val <= last_token) & (
+                last_token < self.block_val + self.offset_val
+            )
+            after_eos = last_token == self.eos_token_id
+            unknown_state = ~(after_block | after_offset | after_eos)
+
+            allowed[after_block, self.block_val : self.block_val + self.offset_val] = True
+            allowed[after_offset, : self.block_val] = True
+            allowed[
+                after_offset,
+                self.block_val : self.block_val + self.offset_val,
+            ] = True
+            allowed[
+                after_offset,
+                self.block_val + self.offset_val : self.block_val
+                + self.offset_val
+                + self.block_val,
+            ] = True
+            allowed[after_offset, self.eos_token_id] = True
+            allowed[after_eos, self.eos_token_id] = True
+            allowed[unknown_state, : self.block_val] = True
+
+        mask_value = -torch.finfo(logits.dtype).max
+        return logits.masked_fill(~allowed, mask_value)
+
     def forward(
         self,
         codes: Tensor,
@@ -122,6 +272,7 @@ class MeshTransformer(LightningModule):
         return_cache: bool = False,
         append_eos: bool = True,
         cache: Tensor = None,
+        return_metrics: bool = False,
     ):
         # handle conditions
         if cond_embeds is None:
@@ -149,7 +300,7 @@ class MeshTransformer(LightningModule):
         # auto append eos token
         if append_eos:
             code_lens = ((codes == self.pad_id).cumsum(dim=-1) == 0).sum(dim=-1)
-            codes = F.pad(codes, (0, 1), value=0)  # value=-1
+            codes = F.pad(codes, (0, 1), value=self.pad_id)
             batch_arange = torch.arange(batch, device=self.device)
             batch_arange = rearrange(batch_arange, "... -> ... 1")
             code_lens = rearrange(code_lens, "... -> ... 1")
@@ -202,37 +353,24 @@ class MeshTransformer(LightningModule):
             return logits, intermediates_with_cache
 
         # loss
-        labels = labels.contiguous().view(-1).long()
-        logits = logits.float().contiguous().view(-1, self.vocab_size + 1)
-        loss_ce = F.cross_entropy(logits, labels, ignore_index=self.pad_id)
-        acc = accuracy(logits, labels, ignore_label=self.pad_id)
-        return loss_ce, acc
+        loss_ce, metrics = self._loss_and_metrics(logits, labels)
+        if return_metrics:
+            return loss_ce, metrics
+        return loss_ce, metrics["acc"]
 
     def training_step(self, batch):
         codes = batch["codes"]
         pc_xyz = batch["pc_xyz"]
 
-        loss_ce, acc = self(codes, pc_xyz)
+        loss_ce, metrics = self(codes, pc_xyz, return_metrics=True)
 
-        self.log(
-            "train/loss_ce",
+        self._log_train_val_metrics(
+            "train",
             loss_ce,
+            metrics,
+            batch_size=codes.shape[0],
             on_step=True,
             on_epoch=False,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-            batch_size=self.batch_size,
-        )
-        self.log(
-            "train/acc",
-            acc,
-            on_step=True,
-            on_epoch=False,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-            batch_size=self.batch_size,
         )
         return loss_ce
 
@@ -240,27 +378,15 @@ class MeshTransformer(LightningModule):
         codes = batch["codes"]
         pc_xyz = batch["pc_xyz"]
 
-        loss_ce, acc = self(codes, pc_xyz)
+        loss_ce, metrics = self(codes, pc_xyz, return_metrics=True)
 
-        self.log(
-            "val/loss_ce",
+        self._log_train_val_metrics(
+            "val",
             loss_ce,
+            metrics,
+            batch_size=codes.shape[0],
             on_step=False,
             on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-            batch_size=self.batch_size,
-        )
-        self.log(
-            "val/acc",
-            acc,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-            batch_size=self.batch_size,
         )
 
     def configure_optimizers(self) -> Dict[str, Any]:
@@ -298,11 +424,13 @@ class MeshTransformer(LightningModule):
         pc_xyz: Tensor,
         prompt: Tensor = None,
         batch_size: int = 1,
-        max_seq_len: int = 1500,
+        max_seq_len: int = None,
         top_k: int = 0,
         top_p: float = 1.0,
         temperature: float = 1.0,
         cache_kv: bool = True,
+        grammar_mask: bool = None,
+        greedy: bool = False,
     ):
         # encode point cloud
         cond_embeds = self.conditioner(pc_xyz)
@@ -311,6 +439,8 @@ class MeshTransformer(LightningModule):
         )
         curr_length = codes.shape[-1]
         cache = None
+        max_seq_len = self.max_seq_len if max_seq_len is None else max_seq_len
+        grammar_mask = self.grammar_mask if grammar_mask is None else grammar_mask
 
         # predict tokens auto-regressively
         for i in tqdm(
@@ -335,9 +465,14 @@ class MeshTransformer(LightningModule):
 
             # sample code from logits
             logits = logits[:, -1]
-            logits = joint_filter(logits, k=top_k, p=top_p)
-            probs = F.softmax(logits / temperature, dim=-1)
-            sample = torch.multinomial(probs, 1)
+            if grammar_mask:
+                logits = self._apply_bpt_grammar_mask(logits, codes)
+            if greedy or temperature <= 0:
+                sample = logits.argmax(dim=-1, keepdim=True)
+            else:
+                logits = joint_filter(logits, k=top_k, p=top_p)
+                probs = F.softmax(logits / temperature, dim=-1)
+                sample = torch.multinomial(probs, 1)
             codes, _ = pack([codes, sample], "b *")
 
             # check for all rows to have [eos] to terminate
@@ -346,6 +481,7 @@ class MeshTransformer(LightningModule):
                 break
 
         # mask out to padding anything after the first eos
+        is_eos_codes = codes == self.eos_token_id
         mask = is_eos_codes.float().cumsum(dim=-1) >= 1
         codes = codes.masked_fill(mask, self.pad_id)
         return codes

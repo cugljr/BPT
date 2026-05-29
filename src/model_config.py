@@ -35,6 +35,12 @@ class BPTModelConfig:
         learning_rate: float,
         eta_min: float,
         epochs: int,
+        vertex_sample_ratio: float = 0.0,
+        loss_weight_block: float = 2.0,
+        loss_weight_offset: float = 1.0,
+        loss_weight_special_block: float = 3.0,
+        loss_weight_eos: float = 3.0,
+        grammar_mask: bool = True,
     ) -> None:
 
         self.exp_flag = exp_flag
@@ -53,6 +59,7 @@ class BPTModelConfig:
             offset_size=offset_size,
             n_points=n_points,
             max_seq_len=max_seq_len,
+            vertex_sample_ratio=vertex_sample_ratio,
         )
 
         self.dataset_length = len(self.data_module.train_dataset)
@@ -86,6 +93,11 @@ class BPTModelConfig:
             eta_min=eta_min,
             warmup_steps=self.warmup_steps,
             cosine_steps=self.cosine_steps,
+            loss_weight_block=loss_weight_block,
+            loss_weight_offset=loss_weight_offset,
+            loss_weight_special_block=loss_weight_special_block,
+            loss_weight_eos=loss_weight_eos,
+            grammar_mask=grammar_mask,
         )
 
         if finetune:

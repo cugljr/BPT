@@ -22,6 +22,7 @@ class BPTDataset(Dataset):
         offset_size: int = 16,
         n_points: int = 4096,
         max_seq_len: Optional[int] = None,
+        vertex_sample_ratio: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -32,6 +33,7 @@ class BPTDataset(Dataset):
         self.offset_size = offset_size
         self.n_points = n_points
         self.max_seq_len = max_seq_len
+        self.vertex_sample_ratio = vertex_sample_ratio
         self.augment = mode == "train" and augment
 
         with open(join(dataset_dir, "split", f"{mode}.txt"), "r") as f:
@@ -108,7 +110,11 @@ class BPTDataset(Dataset):
                 f"Could not sample mesh with seq_len <= {self.max_seq_len} after {max_retries} retries"
             )
 
-        pc_xyz = sample_pc(mesh, self.n_points)
+        pc_xyz = sample_pc_with_vertices(
+            mesh,
+            self.n_points,
+            vertex_ratio=self.vertex_sample_ratio,
+        )
         codes = torch.tensor(codes, dtype=torch.int32)
         pc_xyz = torch.tensor(pc_xyz, dtype=torch.float32)
 
@@ -133,6 +139,7 @@ class BPTDataModule(LightningDataModule):
         n_points: int = 4096,
         pad_id: int = -1,
         max_seq_len: Optional[int] = None,
+        vertex_sample_ratio: float = 0.0,
     ) -> None:
         super().__init__()
         
@@ -148,6 +155,7 @@ class BPTDataModule(LightningDataModule):
             block_size=block_size,
             offset_size=offset_size,
             max_seq_len=max_seq_len,
+            vertex_sample_ratio=vertex_sample_ratio,
         )
         self.val_dataset = BPTDataset(
             dataset_dir=dataset_dir,
@@ -158,6 +166,7 @@ class BPTDataModule(LightningDataModule):
             block_size=block_size,
             offset_size=offset_size,
             max_seq_len=max_seq_len,
+            vertex_sample_ratio=vertex_sample_ratio,
         )
         self.test_dataset = BPTDataset(
             dataset_dir=dataset_dir,
@@ -168,6 +177,7 @@ class BPTDataModule(LightningDataModule):
             block_size=block_size,
             offset_size=offset_size,
             max_seq_len=max_seq_len,
+            vertex_sample_ratio=vertex_sample_ratio,
         )
 
     def collate_model_batch(
