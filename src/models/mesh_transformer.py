@@ -43,6 +43,8 @@ class MeshTransformer(LightningModule):
         loss_weight_offset: float = 1.0,
         loss_weight_special_block: float = 3.0,
         loss_weight_eos: float = 3.0,
+        offset_coord_loss_weight: float = 0.05,
+        offset_coord_loss_beta: float = 1.0,
         grammar_mask: bool = True,
     ):
         super(MeshTransformer, self).__init__()
@@ -77,7 +79,14 @@ class MeshTransformer(LightningModule):
         self.loss_weight_offset = loss_weight_offset
         self.loss_weight_special_block = loss_weight_special_block
         self.loss_weight_eos = loss_weight_eos
+        self.offset_coord_loss_weight = offset_coord_loss_weight
+        self.offset_coord_loss_beta = offset_coord_loss_beta
         self.grammar_mask = grammar_mask
+        self.register_buffer(
+            "offset_coord_table",
+            self._build_offset_coord_table(offset_size),
+            persistent=False,
+        )
 
         self.sp_block_embed = nn.Parameter(torch.randn(1, dim))
         self.block_embed = nn.Parameter(torch.randn(1, dim))
@@ -121,6 +130,14 @@ class MeshTransformer(LightningModule):
             ff_glu=ff_glu
         )
         self.to_logits = nn.Linear(dim, self.vocab_size + 1)
+
+    @staticmethod
+    def _build_offset_coord_table(offset_size: int) -> Tensor:
+        offset_ids = torch.arange(offset_size**3, dtype=torch.float32)
+        x = torch.div(offset_ids, offset_size**2, rounding_mode="floor")
+        y = torch.div(offset_ids % (offset_size**2), offset_size, rounding_mode="floor")
+        z = offset_ids % offset_size
+        return torch.stack([x, y, z], dim=-1)
 
     def _token_type_masks(self, tokens: Tensor) -> Dict[str, Tensor]:
         valid = tokens != self.pad_id
@@ -191,7 +208,58 @@ class MeshTransformer(LightningModule):
             "seq_exact": seq_exact,
             "loss_ce_unweighted": loss_ce_unweighted,
         }
+
+        offset_coord_loss, offset_coord_metrics = self._offset_coord_loss_and_metrics(
+            logits_flat,
+            labels_flat,
+            masks["offset"],
+        )
+        if self.offset_coord_loss_weight > 0:
+            loss_ce = loss_ce + self.offset_coord_loss_weight * offset_coord_loss
+        metrics.update(offset_coord_metrics)
         return loss_ce, metrics
+
+    def _offset_coord_loss_and_metrics(
+        self, logits_flat: Tensor, labels_flat: Tensor, offset_mask: Tensor
+    ):
+        if offset_mask.sum().item() == 0:
+            zero = torch.zeros((), device=logits_flat.device)
+            return zero, {
+                "offset_coord_loss": zero,
+                "offset_coord_l1": zero,
+                "offset_coord_within_1": zero,
+            }
+
+        offset_logits = logits_flat[
+            offset_mask, self.block_val : self.block_val + self.offset_val
+        ]
+        target_offset_ids = labels_flat[offset_mask] - self.block_val
+        coord_table = self.offset_coord_table.to(
+            device=offset_logits.device,
+            dtype=offset_logits.dtype,
+        )
+        target_coords = coord_table[target_offset_ids]
+
+        offset_probs = F.softmax(offset_logits, dim=-1)
+        expected_coords = offset_probs @ coord_table
+        coord_loss = F.smooth_l1_loss(
+            expected_coords,
+            target_coords,
+            beta=self.offset_coord_loss_beta,
+        )
+
+        pred_offset_ids = offset_logits.argmax(dim=-1)
+        pred_coords = coord_table[pred_offset_ids]
+        coord_abs_error = (pred_coords - target_coords).abs()
+        coord_l1_per_token = coord_abs_error.mean(dim=-1)
+        coord_l1 = coord_l1_per_token.mean()
+        coord_within_1 = (coord_abs_error.amax(dim=-1) <= 1.0).float().mean()
+
+        return coord_loss, {
+            "offset_coord_loss": coord_loss.detach(),
+            "offset_coord_l1": coord_l1.detach(),
+            "offset_coord_within_1": coord_within_1.detach(),
+        }
 
     def _log_train_val_metrics(
         self,

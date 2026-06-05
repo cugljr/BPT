@@ -26,6 +26,8 @@ model_config:
   loss_weight_offset: 1.0
   loss_weight_special_block: 3.0
   loss_weight_eos: 3.0
+  offset_coord_loss_weight: 0.05
+  offset_coord_loss_beta: 1.0
 
   #conditioner_type: miche
   miche_path: /home/kemove/devdata1/ljr/BPT/miche

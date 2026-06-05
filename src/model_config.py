@@ -40,6 +40,8 @@ class BPTModelConfig:
         loss_weight_offset: float = 1.0,
         loss_weight_special_block: float = 3.0,
         loss_weight_eos: float = 3.0,
+        offset_coord_loss_weight: float = 0.05,
+        offset_coord_loss_beta: float = 1.0,
         grammar_mask: bool = True,
     ) -> None:
 
@@ -97,6 +99,8 @@ class BPTModelConfig:
             loss_weight_offset=loss_weight_offset,
             loss_weight_special_block=loss_weight_special_block,
             loss_weight_eos=loss_weight_eos,
+            offset_coord_loss_weight=offset_coord_loss_weight,
+            offset_coord_loss_beta=offset_coord_loss_beta,
             grammar_mask=grammar_mask,
         )
 
